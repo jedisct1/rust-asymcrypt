@@ -1,6 +1,6 @@
 [package]
 name = "asymcrypt"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["Frank Denis <github@pureftpd.org>"]
 description = "Encrypt anything with a key that cannot decrypt what it just wrote"
