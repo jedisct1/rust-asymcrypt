@@ -15,10 +15,8 @@ The whole thing runs offline. There is no handshake, no server, no per-message c
 ## Installing
 
 ```sh
-cargo install --path .
+cargo install asymcrypt
 ```
-
-Or build it locally with `cargo build --release` and copy `target/release/asymcrypt` somewhere on your `PATH`.
 
 ## Setting up
 
