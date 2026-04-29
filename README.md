@@ -102,3 +102,7 @@ Be careful: anything in the environment is generally readable by other processes
 - File output never overwrites an existing path. Pass `--force` if you really mean to clobber it.
 
 File output is staged in a temporary file in the destination directory and renamed into place only after the whole stream has been written and flushed. A crash mid-write leaves no partial file behind.
+
+## Other implementations
+
+A Zig implementation is available at [zig-asymcrypt](https://github.com/jedisct1/zig-asymcrypt).
