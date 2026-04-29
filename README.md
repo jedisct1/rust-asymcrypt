@@ -8,9 +8,13 @@ What makes it different from a plain symmetric encryption system is that the key
 
 Decryption requires a separate key (or a password) that was set aside when the keys were generated and that never has to live on the encrypting host.
 
-This shape fits a lot of situations: backups on a host that might later be stolen or compromised, log shipping from a machine you don't fully trust to read its own history, append-only archives written by a service that should not be able to look back at what it wrote, drop boxes where one party encrypts to another, and so on. Anywhere you want a writer that cannot also be a reader, this tool applies.
+This shape fits a lot of situations: backups on a host that might later be stolen or compromised, log shipping from a machine you don't fully trust to read its own history, append-only archives written by a service that should not be able to look back at what it wrote, drop boxes where one party encrypts to another, and so on.
 
-The whole thing runs offline. There is no handshake, no server, no per-message coordination with anyone. You generate a pair of keys once, in a single local command, and from then on the encrypting host can produce as many ciphertexts as it likes without ever talking to the holder of the recovery key. The recovery key sits alone, wherever you decided to put it, and is only consulted when something actually needs to be decrypted.
+Anywhere you want a writer that cannot also be a reader, this tool applies.
+
+The whole thing runs offline. There is no handshake, no server, no per-message coordination with anyone.
+
+You generate a pair of keys once, in a single local command, and from then on the encrypting host can produce as many ciphertexts as it likes without ever talking to the holder of the recovery key. The recovery key sits alone, wherever you decided to put it, and is only consulted when something actually needs to be decrypted.
 
 ## Installing
 
