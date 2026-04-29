@@ -6,7 +6,7 @@ use crate::format::{DEFAULT_CHUNK_SIZE, MAX_CHUNK_SIZE};
 #[derive(Parser, Debug)]
 #[command(
     name = "asymcrypt",
-    about = "Streaming AEGIS-128X2 encryption with one-way key evolution",
+    about = "Encrypt streams with a key that cannot decrypt what it just wrote",
     version,
     arg_required_else_help = true
 )]
