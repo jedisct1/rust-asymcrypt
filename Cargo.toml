@@ -1,0 +1,34 @@
+[package]
+name = "asymcrypt"
+version = "0.1.0"
+edition = "2024"
+authors = ["Frank Denis <github@pureftpd.org>"]
+description = "Symmetric encryption with sender-ignorance"
+license = "MIT"
+keywords = ["crypto", "encrypt", "decrypt"]
+homepage = "https://github.com/jedisct1/rust-asymcrypt"
+repository = "https://github.com/jedisct1/rust-asymcrypt"
+categories = ["cryptography"]
+
+[dependencies]
+aegis = "0.9"
+anyhow = "1"
+argon2 = "0.5"
+clap = { version = "4", features = ["derive"] }
+fs2 = "0.4"
+getrandom = "0.4"
+hex = "0.4"
+hmac = "0.13"
+rpassword = "7"
+sha2 = "0.11"
+subtle = "2"
+tempfile = "3"
+zeroize = { version = "1", features = ["zeroize_derive"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
