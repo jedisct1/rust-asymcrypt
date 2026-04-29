@@ -1,6 +1,6 @@
 # asymcrypt
 
-A forward-secure encryption tool.
+`asymcrypt`: encrypt anything with a key that cannot decrypt what it just wrote.
 
 It works like `encpipe`: input defaults to stdin, output defaults to stdout, can process arbitrary large inputs ; file paths are optional.
 
