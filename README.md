@@ -26,7 +26,7 @@ cargo install asymcrypt
 
 You start by creating a fresh pair of keys. Both keys are produced locally in one shot, with no network involved and no exchange between machines.
 
-The recovery key is the one you need to keep offline. Print it, write it to a USB stick, store it in a password manager, whatever fits your threat model. It is the only thing that can ever decrypt a ciphertext, and it never has to leave the place you stored it until you actually need to recover something.
+The recovery key is the one you need to keep offline. Print it, write it to a USB stick, store it in a password manager, whatever fits your threat model. It is the only thing that can ever decrypt all the ciphertexts, and it never has to leave the place you stored it until you actually need to recover something.
 
 The current key lives on the encrypting host. It can encrypt an unbounded number of inputs on its own, and it is rotated automatically after each one.
 
