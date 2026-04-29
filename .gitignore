@@ -2,4 +2,5 @@
 *~
 /target
 /tmp
+Cargo.lock
 LOG.md
