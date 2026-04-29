@@ -1,10 +1,10 @@
 # asymcrypt
 
-`asymcrypt`: encrypt anything with a key that cannot decrypt what it just wrote.
+`asymcrypt`: encrypt anything offline with a key that cannot decrypt what it just wrote.
 
 It works like `encpipe`: input defaults to `stdin`, output defaults to `stdout`, can process arbitrary large inputs ; file paths are optional.
 
-What makes it different from a plain symmetric encryption system is that the key on the encrypting machine moves forward on every encryption. Once a message has been written, the host that produced it can no longer decrypt it, nor anything it produced before.
+What makes it different from a plain symmetric encryption system is usage of a hash chain: the key on the encrypting machine moves forward on every encryption. Once a message has been written, the host that produced it can no longer decrypt it, nor anything it produced before.
 
 Decryption requires a separate key (or a password) that was set aside when the keys were generated and that never has to live on the encrypting host.
 
