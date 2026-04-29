@@ -96,11 +96,3 @@ Be careful: anything in the environment is generally readable by other processes
 - File output never overwrites an existing path. Pass `--force` if you really mean to clobber it.
 
 File output is staged in a temporary file in the destination directory and renamed into place only after the whole stream has been written and flushed. A crash mid-write leaves no partial file behind.
-
-## Key file permissions
-
-`asymcrypt` refuses to read a key file that is group- or world-readable, so a
-stray `chmod` does not silently expose your keys. If you really want to
-keep a permissive mode (because the file lives on a shared filesystem you
-trust, for example), pass `--insecure-perms`. The recommended mode is
-`chmod 600`.
