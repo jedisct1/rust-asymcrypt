@@ -2,7 +2,7 @@
 
 `asymcrypt`: encrypt anything with a key that cannot decrypt what it just wrote.
 
-It works like `encpipe`: input defaults to stdin, output defaults to stdout, can process arbitrary large inputs ; file paths are optional.
+It works like `encpipe`: input defaults to `stdin`, output defaults to `stdout`, can process arbitrary large inputs ; file paths are optional.
 
 What makes it different from a plain symmetric encryption system is that the key on the encrypting machine moves forward on every encryption. Once a message has been written, the host that produced it can no longer decrypt it, nor anything it produced before.
 
@@ -95,8 +95,8 @@ Be careful: anything in the environment is generally readable by other processes
 
 ## Input and output
 
-- `-i PATH` reads from `PATH`. Without `-i`, or with `-i -`, `asymcrypt` reads stdin. This is the usual case — encryption is meant to sit in a pipe.
-- `-o PATH` writes to `PATH`. Without `-o`, or with `-o -`, output goes to stdout.
+- `-i PATH` reads from `PATH`. Without `-i`, or with `-i -`, `asymcrypt` reads `stdin`. This is the usual case — encryption is meant to sit in a pipe.
+- `-o PATH` writes to `PATH`. Without `-o`, or with `-o -`, output goes to `stdout`.
 - File output never overwrites an existing path. Pass `--force` if you really mean to clobber it.
 
 File output is staged in a temporary file in the destination directory and renamed into place only after the whole stream has been written and flushed. A crash mid-write leaves no partial file behind.
