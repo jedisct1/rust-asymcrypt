@@ -4,6 +4,8 @@
 
 It works like [`encpipe`](https://github.com/jedisct1/encpipe): input defaults to `stdin`, output defaults to `stdout`, can process arbitrary large inputs ; file paths are optional.
 
+Encryption is authenticated, fast, post-quantum resistant, etc. The underlying cipher is [AEGIS-128X](https://datatracker.ietf.org/doc/draft-irtf-cfrg-aegis-aead/), a parallel AES-based AEAD that runs at memory speed on anything with hardware AES support.
+
 What makes it different from a plain symmetric encryption system is usage of a hash chain: the key on the encrypting machine moves forward on every encryption. Once a message has been written, the host that produced it can no longer decrypt it, nor anything it produced before.
 
 Decryption requires a separate key (or a password) that was set aside when the keys were generated and that never has to live on the encrypting host.
