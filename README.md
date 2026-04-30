@@ -103,6 +103,15 @@ Be careful: anything in the environment is generally readable by other processes
 
 File output is staged in a temporary file in the destination directory and renamed into place only after the whole stream has been written and flushed. A crash mid-write leaves no partial file behind.
 
+## Why not just ECIES, HPKE, etc.?
+
+The canonical way to address this problem is to use a non-interactive key exchange mechanism. The encrypter generates an ephemeral key pair, combines it with the decrypter's public key to compute an encryption secret, attaches the ephemeral public key to the ciphertext, and forgets both secrets.
+
+It turns out that the hash chain gives us different properties:
+
+- It is post-quantum resistant, based on the most boring and well-studied primitive there is. By contrast, there are currently no post-quantum non-interactive key exchange mechanisms beyond academic proposals (Swoosh is particularly interesting, but still lacks scrutiny).
+- Ordering is cryptographically tied to the number of iterations required to recover the encryption key, and that number can only increase. In other words, even if the encrypter is compromised, an attacker cannot pretend that newly created ciphertexts were produced in the past.
+
 ## Other implementations
 
 A Zig implementation is available at [zig-asymcrypt](https://github.com/jedisct1/zig-asymcrypt).
