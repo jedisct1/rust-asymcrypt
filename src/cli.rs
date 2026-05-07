@@ -6,7 +6,7 @@ use crate::format::{DEFAULT_CHUNK_SIZE, MAX_CHUNK_SIZE};
 #[derive(Parser, Debug)]
 #[command(
     name = "asymcrypt",
-    about = "Encrypt streams with a key that cannot decrypt what it just wrote",
+    about = "Encrypt streams with a public key that cannot decrypt what it just wrote",
     version,
     arg_required_else_help = true
 )]
@@ -17,29 +17,31 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Initialise a fresh key chain.
+    /// Initialise an ML-KEM-768 key pair.
     ///
-    /// By default, writes a random recovery key to `--recovery-out` (keep
-    /// this offline) and the working key to `--out`. With `--password`,
-    /// derives the recovery key from a prompted password and writes only
-    /// `--out`.
+    /// By default, writes the public encapsulation key to `--out` (device)
+    /// and the private decapsulation seed to `--recovery-out` (offline).
+    /// With `--password`, derives a wrapping key from a prompted password,
+    /// encrypts the seed into a composite key file at `--out`, and skips
+    /// `--recovery-out`.
     Init(InitArgs),
-    /// Encrypt a stream using the current mutable key, then evolve it.
+    /// Encrypt a stream against the device's encapsulation key.
     Encrypt(EncryptArgs),
-    /// Decrypt a stream by walking the key chain forward from a recovery key
-    /// or password.
+    /// Decrypt a stream using the offline decapsulation seed or a password.
     Decrypt(DecryptArgs),
 }
 
 #[derive(Args, Debug)]
 pub struct InitArgs {
-    /// Path for the working key used by `encrypt`. Will not overwrite.
+    /// Path for the device key used by `encrypt`. Will not overwrite.
     #[arg(long, short = 'o')]
     pub out: PathBuf,
-    /// Path for the offline recovery key. Required unless `--password` is set.
+    /// Path for the offline recovery key (decapsulation seed). Required
+    /// unless `--password` is set.
     #[arg(long = "recovery-out", short = 'r')]
     pub recovery_out: Option<PathBuf>,
-    /// Derive the recovery key from a prompted password instead of random bytes.
+    /// Derive the wrapping key from a prompted password instead of writing
+    /// a separate recovery file.
     #[arg(long)]
     pub password: bool,
     /// Write key files as ASCII hex instead of raw bytes.
@@ -58,7 +60,7 @@ pub struct InitArgs {
 
 #[derive(Args, Debug)]
 pub struct EncryptArgs {
-    /// Path to the key file.
+    /// Path to the key file (encapsulation key or composite).
     #[arg(long, short = 'k')]
     pub key_file: PathBuf,
     /// Input file. Use `-` or omit for stdin.
@@ -80,10 +82,10 @@ pub struct EncryptArgs {
 
 #[derive(Args, Debug)]
 pub struct DecryptArgs {
-    /// Original recovery key. Mutually exclusive with --password.
+    /// Offline decapsulation seed. Mutually exclusive with --password.
     #[arg(long, short = 'k', conflicts_with = "password")]
     pub key_file: Option<PathBuf>,
-    /// Derive the original key by prompting for the password.
+    /// Derive the decapsulation seed by prompting for the password.
     #[arg(long)]
     pub password: bool,
     /// Input file. Use `-` or omit for stdin.
@@ -92,10 +94,6 @@ pub struct DecryptArgs {
     /// Output file. Use `-` or omit for stdout.
     #[arg(long, short = 'o')]
     pub output: Option<PathBuf>,
-    /// Maximum number of key-chain steps to try. 0 means "only the provided
-    /// key".
-    #[arg(long, default_value_t = 1_000_000u64)]
-    pub max_key_steps: u64,
     /// Allow overwriting an existing output file.
     #[arg(long)]
     pub force: bool,

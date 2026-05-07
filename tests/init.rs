@@ -1,8 +1,7 @@
 use asymcrypt::cli::{DecryptArgs, EncryptArgs, InitArgs};
-use asymcrypt::crypto::{MASTER_KEY_LEN, evolve_key};
-use asymcrypt::format::ARGON2_METADATA_LEN;
+use asymcrypt::crypto::{DK_SEED_LEN, EK_LEN, PASSWORD_BLOB_LEN};
 use asymcrypt::key::{
-    KEY_TYPE_COMPOSITE_V1, KEY_TYPE_PLAIN_V1, KEY_TYPE_RECOVERY_V1, KeyRole, parse_key_file,
+    KEY_TYPE_COMPOSITE, KEY_TYPE_DK_SEED, KEY_TYPE_EK, ParsedKeyFile, parse_key_file,
 };
 use asymcrypt::pipeline::{run_decrypt, run_encrypt, run_init};
 use std::fs;
@@ -10,10 +9,6 @@ use std::path::PathBuf;
 
 mod common;
 use common::{password_init, password_init_hex, random_init, random_init_hex, with_password};
-
-fn read_master(bytes: &[u8]) -> [u8; MASTER_KEY_LEN] {
-    parse_key_file(bytes).unwrap().key
-}
 
 fn encrypt_args(key_file: PathBuf, input: PathBuf, output: PathBuf) -> EncryptArgs {
     EncryptArgs {
@@ -26,71 +21,57 @@ fn encrypt_args(key_file: PathBuf, input: PathBuf, output: PathBuf) -> EncryptAr
     }
 }
 
-fn decrypt_args_keyfile(
-    key_file: PathBuf,
-    input: PathBuf,
-    output: PathBuf,
-    max_steps: u64,
-) -> DecryptArgs {
+fn decrypt_args_keyfile(key_file: PathBuf, input: PathBuf, output: PathBuf) -> DecryptArgs {
     DecryptArgs {
         key_file: Some(key_file),
         password: false,
         input: Some(input),
         output: Some(output),
-        max_key_steps: max_steps,
         force: false,
         insecure_perms: false,
     }
 }
 
-fn decrypt_args_password(input: PathBuf, output: PathBuf, max_steps: u64) -> DecryptArgs {
+fn decrypt_args_password(input: PathBuf, output: PathBuf) -> DecryptArgs {
     DecryptArgs {
         key_file: None,
         password: true,
         input: Some(input),
         output: Some(output),
-        max_key_steps: max_steps,
         force: false,
         insecure_perms: false,
     }
 }
 
 #[test]
-fn random_mode_writes_both_files_with_chain_invariant() {
+fn random_mode_writes_both_files() {
     let dir = tempfile::tempdir().unwrap();
-    let current = dir.path().join("current.key");
+    let device = dir.path().join("device.key");
     let recovery = dir.path().join("recovery.key");
-    run_init(random_init(current.clone(), recovery.clone())).unwrap();
+    run_init(random_init(device.clone(), recovery.clone())).unwrap();
 
-    let cur_bytes = fs::read(&current).unwrap();
+    let dev_bytes = fs::read(&device).unwrap();
     let rec_bytes = fs::read(&recovery).unwrap();
 
-    assert_eq!(cur_bytes.len(), 1 + MASTER_KEY_LEN);
-    assert_eq!(rec_bytes.len(), 1 + MASTER_KEY_LEN);
-    assert_eq!(cur_bytes[0], KEY_TYPE_PLAIN_V1);
-    assert_eq!(rec_bytes[0], KEY_TYPE_RECOVERY_V1);
+    assert_eq!(dev_bytes.len(), 1 + EK_LEN);
+    assert_eq!(rec_bytes.len(), 1 + DK_SEED_LEN);
+    assert_eq!(dev_bytes[0], KEY_TYPE_EK);
+    assert_eq!(rec_bytes[0], KEY_TYPE_DK_SEED);
 
-    let cur = parse_key_file(&cur_bytes).unwrap();
+    let dev = parse_key_file(&dev_bytes).unwrap();
     let rec = parse_key_file(&rec_bytes).unwrap();
-    assert_eq!(cur.role, KeyRole::Chain);
-    assert_eq!(rec.role, KeyRole::Recovery);
-    assert!(cur.kdf.is_none());
-    assert!(rec.kdf.is_none());
-    assert_ne!(cur.key, rec.key);
-
-    let mut evolved = rec.key;
-    evolve_key(&mut evolved);
-    assert_eq!(evolved, cur.key, "current must equal evolve(recovery)");
+    assert!(dev.is_public());
+    assert!(!rec.is_public());
 }
 
 #[test]
-fn random_mode_hex_chain_invariant() {
+fn random_mode_hex() {
     let dir = tempfile::tempdir().unwrap();
-    let current = dir.path().join("current.key");
+    let device = dir.path().join("device.key");
     let recovery = dir.path().join("recovery.key");
-    run_init(random_init_hex(current.clone(), recovery.clone())).unwrap();
+    run_init(random_init_hex(device.clone(), recovery.clone())).unwrap();
 
-    for path in [&current, &recovery] {
+    for path in [&device, &recovery] {
         let bytes = fs::read(path).unwrap();
         let trimmed: Vec<u8> = bytes
             .iter()
@@ -104,53 +85,62 @@ fn random_mode_hex_chain_invariant() {
         );
     }
 
-    let cur = parse_key_file(&fs::read(&current).unwrap()).unwrap();
+    let dev = parse_key_file(&fs::read(&device).unwrap()).unwrap();
     let rec = parse_key_file(&fs::read(&recovery).unwrap()).unwrap();
-    assert_eq!(cur.role, KeyRole::Chain);
-    assert_eq!(rec.role, KeyRole::Recovery);
-
-    let mut evolved = rec.key;
-    evolve_key(&mut evolved);
-    assert_eq!(evolved, cur.key);
+    assert!(dev.is_public());
+    assert!(!rec.is_public());
 }
 
 #[cfg(unix)]
 #[test]
-fn random_mode_files_are_mode_0600() {
+fn recovery_key_is_mode_0600() {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
-    let current = dir.path().join("current.key");
+    let device = dir.path().join("device.key");
     let recovery = dir.path().join("recovery.key");
-    run_init(random_init(current.clone(), recovery.clone())).unwrap();
-    for path in [&current, &recovery] {
-        let mode = fs::metadata(path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600, "{} has mode {:o}", path.display(), mode);
-    }
+    run_init(random_init(device.clone(), recovery.clone())).unwrap();
+    let rec_mode = fs::metadata(&recovery).unwrap().permissions().mode() & 0o777;
+    assert_eq!(rec_mode, 0o600, "recovery key has mode {:o}", rec_mode);
+}
+
+#[cfg(unix)]
+#[test]
+fn device_key_is_mode_0644() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let device = dir.path().join("device.key");
+    let recovery = dir.path().join("recovery.key");
+    run_init(random_init(device.clone(), recovery.clone())).unwrap();
+    let dev_mode = fs::metadata(&device).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        dev_mode, 0o644,
+        "public encapsulation key should be world-readable, got {:o}",
+        dev_mode
+    );
 }
 
 #[test]
-fn password_mode_writes_only_current() {
+fn password_mode_writes_only_device() {
     let dir = tempfile::tempdir().unwrap();
-    let current = dir.path().join("current.key");
+    let device = dir.path().join("device.key");
     with_password("hunter2", || {
-        run_init(password_init(current.clone())).unwrap();
+        run_init(password_init(device.clone())).unwrap();
     });
-    let bytes = fs::read(&current).unwrap();
-    assert_eq!(bytes.len(), 1 + MASTER_KEY_LEN + ARGON2_METADATA_LEN);
-    assert_eq!(bytes[0], KEY_TYPE_COMPOSITE_V1);
+    let bytes = fs::read(&device).unwrap();
+    assert_eq!(bytes.len(), 1 + EK_LEN + PASSWORD_BLOB_LEN);
+    assert_eq!(bytes[0], KEY_TYPE_COMPOSITE);
     let parsed = parse_key_file(&bytes).unwrap();
-    assert_eq!(parsed.role, KeyRole::Chain);
-    assert!(parsed.kdf.is_some());
+    assert!(!parsed.is_public());
 }
 
 #[test]
 fn password_mode_hex_round_trips() {
     let dir = tempfile::tempdir().unwrap();
-    let current = dir.path().join("current.key");
+    let device = dir.path().join("device.key");
     with_password("hunter2", || {
-        run_init(password_init_hex(current.clone())).unwrap();
+        run_init(password_init_hex(device.clone())).unwrap();
     });
-    let bytes = fs::read(&current).unwrap();
+    let bytes = fs::read(&device).unwrap();
     let trimmed: Vec<u8> = bytes
         .iter()
         .copied()
@@ -158,45 +148,44 @@ fn password_mode_hex_round_trips() {
         .collect();
     assert!(trimmed.iter().all(|b| b.is_ascii_hexdigit()));
     let parsed = parse_key_file(&bytes).unwrap();
-    assert!(parsed.kdf.is_some());
-    assert_eq!(parsed.role, KeyRole::Chain);
+    assert!(!parsed.is_public());
 }
 
 #[test]
 fn random_mode_refuses_to_overwrite_recovery() {
     let dir = tempfile::tempdir().unwrap();
-    let current = dir.path().join("current.key");
+    let device = dir.path().join("device.key");
     let recovery = dir.path().join("recovery.key");
     fs::write(&recovery, b"do not clobber me").unwrap();
-    let res = run_init(random_init(current.clone(), recovery.clone()));
+    let res = run_init(random_init(device.clone(), recovery.clone()));
     assert!(res.is_err());
     assert_eq!(fs::read(&recovery).unwrap(), b"do not clobber me");
-    assert!(!current.exists(), "current must not be created on failure");
+    assert!(!device.exists(), "device must not be created on failure");
 }
 
 #[test]
-fn random_mode_refuses_to_overwrite_current() {
+fn random_mode_refuses_to_overwrite_device() {
     let dir = tempfile::tempdir().unwrap();
-    let current = dir.path().join("current.key");
+    let device = dir.path().join("device.key");
     let recovery = dir.path().join("recovery.key");
-    fs::write(&current, b"do not clobber me").unwrap();
-    let res = run_init(random_init(current.clone(), recovery.clone()));
+    fs::write(&device, b"do not clobber me").unwrap();
+    let res = run_init(random_init(device.clone(), recovery.clone()));
     assert!(res.is_err());
-    assert_eq!(fs::read(&current).unwrap(), b"do not clobber me");
+    assert_eq!(fs::read(&device).unwrap(), b"do not clobber me");
     assert!(
         !recovery.exists(),
-        "recovery must not be created when current already exists"
+        "recovery must not be created when device already exists"
     );
 }
 
 #[test]
 fn password_mode_refuses_to_overwrite() {
     let dir = tempfile::tempdir().unwrap();
-    let current = dir.path().join("current.key");
-    fs::write(&current, b"do not clobber me").unwrap();
-    let res = with_password("hunter2", || run_init(password_init(current.clone())));
+    let device = dir.path().join("device.key");
+    fs::write(&device, b"do not clobber me").unwrap();
+    let res = with_password("hunter2", || run_init(password_init(device.clone())));
     assert!(res.is_err());
-    assert_eq!(fs::read(&current).unwrap(), b"do not clobber me");
+    assert_eq!(fs::read(&device).unwrap(), b"do not clobber me");
 }
 
 #[test]
@@ -212,19 +201,19 @@ fn equal_paths_rejected_before_io() {
 fn missing_parent_directory_rejected() {
     let dir = tempfile::tempdir().unwrap();
     let recovery = dir.path().join("recovery.key");
-    let current = dir.path().join("no-such-dir").join("current.key");
-    let res = run_init(random_init(current.clone(), recovery.clone()));
+    let device = dir.path().join("no-such-dir").join("device.key");
+    let res = run_init(random_init(device.clone(), recovery.clone()));
     assert!(res.is_err());
     assert!(!recovery.exists(), "recovery must not be written");
-    assert!(!current.exists(), "current must not be written");
+    assert!(!device.exists(), "device must not be written");
 }
 
 #[test]
 fn runtime_validation_random_requires_recovery() {
     let dir = tempfile::tempdir().unwrap();
-    let current = dir.path().join("current.key");
+    let device = dir.path().join("device.key");
     let args = InitArgs {
-        out: current.clone(),
+        out: device.clone(),
         recovery_out: None,
         password: false,
         hex: false,
@@ -234,16 +223,16 @@ fn runtime_validation_random_requires_recovery() {
     };
     let err = run_init(args).expect_err("missing --recovery-out must fail");
     assert!(format!("{err:#}").contains("recovery-out"));
-    assert!(!current.exists());
+    assert!(!device.exists());
 }
 
 #[test]
 fn runtime_validation_password_rejects_recovery() {
     let dir = tempfile::tempdir().unwrap();
-    let current = dir.path().join("current.key");
+    let device = dir.path().join("device.key");
     let recovery = dir.path().join("recovery.key");
     let args = InitArgs {
-        out: current.clone(),
+        out: device.clone(),
         recovery_out: Some(recovery.clone()),
         password: true,
         hex: false,
@@ -254,140 +243,106 @@ fn runtime_validation_password_rejects_recovery() {
     let res = with_password("hunter2", || run_init(args));
     let err = res.expect_err("--recovery-out with --password must fail");
     assert!(format!("{err:#}").contains("recovery-out"));
-    assert!(!current.exists());
+    assert!(!device.exists());
     assert!(!recovery.exists());
 }
 
 #[test]
 fn round_trip_recovers_with_offline_key() {
     let dir = tempfile::tempdir().unwrap();
-    let current = dir.path().join("current.key");
+    let device = dir.path().join("device.key");
     let recovery = dir.path().join("recovery.key");
-    run_init(random_init(current.clone(), recovery.clone())).unwrap();
+    run_init(random_init(device.clone(), recovery.clone())).unwrap();
 
     let plain = dir.path().join("plain.txt");
     let cipher = dir.path().join("plain.asym");
     let recovered = dir.path().join("plain.out");
-    fs::write(&plain, b"hello two-file init").unwrap();
+    fs::write(&plain, b"hello ml-kem").unwrap();
 
-    run_encrypt(encrypt_args(current.clone(), plain.clone(), cipher.clone())).unwrap();
-    run_decrypt(decrypt_args_keyfile(
-        recovery.clone(),
-        cipher.clone(),
-        recovered.clone(),
-        1_000,
-    ))
-    .unwrap();
-    assert_eq!(fs::read(&recovered).unwrap(), b"hello two-file init");
-}
-
-#[test]
-fn recovery_is_at_step_zero_current_at_step_one() {
-    let dir = tempfile::tempdir().unwrap();
-    let current = dir.path().join("current.key");
-    let recovery = dir.path().join("recovery.key");
-    run_init(random_init(current.clone(), recovery.clone())).unwrap();
-
-    let plain = dir.path().join("plain.txt");
-    let cipher = dir.path().join("plain.asym");
-    let out = dir.path().join("out.bin");
-    fs::write(&plain, b"x").unwrap();
-
-    run_encrypt(encrypt_args(current.clone(), plain.clone(), cipher.clone())).unwrap();
-
-    let res = run_decrypt(decrypt_args_keyfile(
-        recovery.clone(),
-        cipher.clone(),
-        out.clone(),
-        0,
-    ));
-    assert!(
-        res.is_err(),
-        "with --max-key-steps 0, recovery key must not match (proves recovery is at step 0)"
-    );
-}
-
-#[test]
-fn password_mode_current_is_one_step_past_k0() {
-    let dir = tempfile::tempdir().unwrap();
-    let current = dir.path().join("current.key");
-    let plain = dir.path().join("plain.txt");
-    let cipher = dir.path().join("plain.asym");
-    let recovered = dir.path().join("plain.out");
-    fs::write(&plain, b"password mode chain step").unwrap();
-
-    with_password("hunter2", || {
-        run_init(password_init(current.clone())).unwrap();
-        run_encrypt(encrypt_args(current.clone(), plain.clone(), cipher.clone())).unwrap();
-        run_decrypt(decrypt_args_password(
-            cipher.clone(),
-            recovered.clone(),
-            1_000,
-        ))
-        .unwrap();
-        assert_eq!(fs::read(&recovered).unwrap(), b"password mode chain step");
-
-        let strict = dir.path().join("strict.out");
-        let res = run_decrypt(decrypt_args_password(cipher.clone(), strict, 0));
-        assert!(
-            res.is_err(),
-            "password-derived K_0 with --max-key-steps 0 must fail (current is K_1, not K_0)"
-        );
-    });
+    run_encrypt(encrypt_args(device, plain, cipher.clone())).unwrap();
+    run_decrypt(decrypt_args_keyfile(recovery, cipher, recovered.clone())).unwrap();
+    assert_eq!(fs::read(&recovered).unwrap(), b"hello ml-kem");
 }
 
 #[test]
 fn encrypt_rejects_recovery_key() {
     let dir = tempfile::tempdir().unwrap();
-    let current = dir.path().join("current.key");
+    let device = dir.path().join("device.key");
     let recovery = dir.path().join("recovery.key");
-    run_init(random_init(current.clone(), recovery.clone())).unwrap();
+    run_init(random_init(device.clone(), recovery.clone())).unwrap();
 
-    let cur_before = fs::read(&current).unwrap();
+    let dev_before = fs::read(&device).unwrap();
     let rec_before = fs::read(&recovery).unwrap();
 
     let plain = dir.path().join("plain.txt");
     let cipher = dir.path().join("plain.asym");
     fs::write(&plain, b"should not encrypt").unwrap();
 
-    let res = run_encrypt(encrypt_args(
-        recovery.clone(),
-        plain.clone(),
-        cipher.clone(),
-    ));
-    let err = res.expect_err("encrypt with --key-file pointing at a recovery key must fail");
-    assert!(format!("{err:#}").contains("recovery"));
+    let res = run_encrypt(encrypt_args(recovery.clone(), plain, cipher.clone()));
+    let err = res.expect_err("encrypt with recovery key must fail");
+    assert!(format!("{err:#}").contains("decapsulation seed"));
 
-    assert_eq!(fs::read(&current).unwrap(), cur_before, "current rotated");
-    assert_eq!(fs::read(&recovery).unwrap(), rec_before, "recovery touched");
+    assert_eq!(fs::read(&device).unwrap(), dev_before);
+    assert_eq!(fs::read(&recovery).unwrap(), rec_before);
     assert!(!cipher.exists(), "no ciphertext should have been written");
 }
 
 #[test]
-fn decrypt_rejects_chain_key() {
+fn decrypt_rejects_ek_file() {
     let dir = tempfile::tempdir().unwrap();
-    let current = dir.path().join("current.key");
+    let device = dir.path().join("device.key");
     let recovery = dir.path().join("recovery.key");
-    run_init(random_init(current.clone(), recovery.clone())).unwrap();
+    run_init(random_init(device.clone(), recovery.clone())).unwrap();
 
     let plain = dir.path().join("plain.txt");
     let cipher = dir.path().join("plain.asym");
     let out = dir.path().join("out.bin");
     fs::write(&plain, b"hi").unwrap();
-    run_encrypt(encrypt_args(current.clone(), plain.clone(), cipher.clone())).unwrap();
+    run_encrypt(encrypt_args(device.clone(), plain, cipher.clone())).unwrap();
 
-    // After encrypt, current has rotated to K_2, recovery still K_0.
-    let res = run_decrypt(decrypt_args_keyfile(
-        current.clone(),
-        cipher.clone(),
-        out.clone(),
-        1_000,
-    ));
-    let err = res.expect_err("decrypt --key-file with a chain key must fail");
-    assert!(format!("{err:#}").contains("chain"));
+    let res = run_decrypt(decrypt_args_keyfile(device, cipher, out.clone()));
+    let err = res.expect_err("decrypt with public ek must fail");
+    assert!(format!("{err:#}").contains("encapsulation key"));
     assert!(!out.exists());
+}
 
-    let _ = read_master(&fs::read(&recovery).unwrap());
+#[test]
+fn password_mode_round_trip() {
+    let dir = tempfile::tempdir().unwrap();
+    let device = dir.path().join("device.key");
+    let plain = dir.path().join("plain.txt");
+    let cipher = dir.path().join("plain.asym");
+    let recovered = dir.path().join("plain.out");
+    fs::write(&plain, b"password mode payload").unwrap();
+
+    with_password("hunter2", || {
+        run_init(password_init(device.clone())).unwrap();
+        run_encrypt(encrypt_args(device.clone(), plain.clone(), cipher.clone())).unwrap();
+        run_decrypt(decrypt_args_password(cipher.clone(), recovered.clone())).unwrap();
+        assert_eq!(fs::read(&recovered).unwrap(), b"password mode payload");
+    });
+}
+
+#[test]
+fn decrypt_password_on_public_key_mode_fails_before_prompting() {
+    let dir = tempfile::tempdir().unwrap();
+    let device = dir.path().join("device.key");
+    let recovery = dir.path().join("recovery.key");
+    run_init(random_init(device.clone(), recovery)).unwrap();
+
+    let plain = dir.path().join("plain.txt");
+    let cipher = dir.path().join("plain.asym");
+    fs::write(&plain, b"public key mode").unwrap();
+    run_encrypt(encrypt_args(device, plain, cipher.clone())).unwrap();
+
+    let out = dir.path().join("out.bin");
+    let res = run_decrypt(decrypt_args_password(cipher, out.clone()));
+    let err = res.expect_err("password decrypt on non-password ciphertext must fail");
+    assert!(
+        format!("{err:#}").contains("not encrypted in password mode"),
+        "expected early error about non-password mode, got: {err:#}"
+    );
+    assert!(!out.exists());
 }
 
 #[test]
@@ -408,7 +363,7 @@ fn argon2_zero_iters_rejected_before_password_prompt() {
 #[test]
 fn argon2_flags_without_password_rejected() {
     let dir = tempfile::tempdir().unwrap();
-    let current = dir.path().join("k.key");
+    let device = dir.path().join("k.key");
     let recovery = dir.path().join("r.key");
 
     for set in [
@@ -416,7 +371,7 @@ fn argon2_flags_without_password_rejected() {
         |a: &mut InitArgs| a.argon2_iters = Some(3),
         |a: &mut InitArgs| a.argon2_lanes = Some(2),
     ] {
-        let mut args = random_init(current.clone(), recovery.clone());
+        let mut args = random_init(device.clone(), recovery.clone());
         set(&mut args);
         let err = run_init(args).expect_err("argon2 flag without --password must fail");
         let msg = format!("{err:#}");
@@ -424,7 +379,34 @@ fn argon2_flags_without_password_rejected() {
             msg.contains("argon2") && msg.contains("password"),
             "expected runtime rejection, got: {msg}"
         );
-        assert!(!current.exists());
+        assert!(!device.exists());
         assert!(!recovery.exists());
     }
+}
+
+#[test]
+fn kem_keypair_is_consistent() {
+    let dir = tempfile::tempdir().unwrap();
+    let device = dir.path().join("device.key");
+    let recovery = dir.path().join("recovery.key");
+    run_init(random_init(device.clone(), recovery.clone())).unwrap();
+
+    let dev_parsed = parse_key_file(&fs::read(&device).unwrap()).unwrap();
+    let rec_parsed = parse_key_file(&fs::read(&recovery).unwrap()).unwrap();
+
+    let ek_bytes = match dev_parsed {
+        ParsedKeyFile::EncapsulationKey { ek_bytes, .. } => ek_bytes,
+        _ => panic!("expected EncapsulationKey"),
+    };
+    let seed = match rec_parsed {
+        ParsedKeyFile::DecapsulationSeed { seed, .. } => seed,
+        _ => panic!("expected DecapsulationSeed"),
+    };
+
+    let (ct, ss_enc) = asymcrypt::crypto::kem_encapsulate(&ek_bytes).unwrap();
+    let ss_dec = asymcrypt::crypto::kem_decapsulate(&seed, &ct);
+    assert_eq!(
+        ss_enc, ss_dec,
+        "KEM keypair written by init must be consistent"
+    );
 }

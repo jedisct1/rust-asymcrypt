@@ -7,14 +7,37 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
 mod common;
-use common::random_init;
+use common::{password_init, random_init, with_password};
 
 #[test]
-fn group_or_world_readable_key_is_rejected() {
+fn ek_file_skips_permission_check() {
     let dir = tempfile::tempdir().unwrap();
     let key = dir.path().join("k.key");
     let recovery = dir.path().join("rec.key");
     run_init(random_init(key.clone(), recovery)).unwrap();
+    fs::set_permissions(&key, fs::Permissions::from_mode(0o644)).unwrap();
+
+    let plain = dir.path().join("p");
+    fs::write(&plain, b"x").unwrap();
+
+    run_encrypt(EncryptArgs {
+        key_file: key,
+        input: Some(plain),
+        output: Some(dir.path().join("p.enc")),
+        chunk_size: DEFAULT_CHUNK_SIZE,
+        force: false,
+        insecure_perms: false,
+    })
+    .expect("public encapsulation key should not require 0600 permissions");
+}
+
+#[test]
+fn composite_key_rejects_insecure_permissions() {
+    let dir = tempfile::tempdir().unwrap();
+    let key = dir.path().join("k.key");
+    with_password("test", || {
+        run_init(password_init(key.clone())).unwrap();
+    });
     fs::set_permissions(&key, fs::Permissions::from_mode(0o644)).unwrap();
 
     let plain = dir.path().join("p");
@@ -28,43 +51,33 @@ fn group_or_world_readable_key_is_rejected() {
         force: false,
         insecure_perms: false,
     });
-    let err = res.expect_err("encrypt with group-readable key must fail");
+    let err = res.expect_err("encrypt with group-readable composite key must fail");
     let msg = format!("{err:#}");
     assert!(
         msg.contains("insecure permissions"),
         "expected permission error, got: {msg}"
     );
-
-    // The key file must not have been advanced by the rejected attempt.
-    let mode = fs::metadata(&key).unwrap().permissions().mode() & 0o777;
-    assert_eq!(mode, 0o644);
 }
 
 #[test]
-fn insecure_perms_flag_overrides() {
+fn composite_key_insecure_perms_flag_overrides() {
     let dir = tempfile::tempdir().unwrap();
     let key = dir.path().join("k.key");
-    let recovery = dir.path().join("rec.key");
-    run_init(random_init(key.clone(), recovery)).unwrap();
+    with_password("test", || {
+        run_init(password_init(key.clone())).unwrap();
+    });
     fs::set_permissions(&key, fs::Permissions::from_mode(0o644)).unwrap();
 
     let plain = dir.path().join("p");
     fs::write(&plain, b"x").unwrap();
 
     run_encrypt(EncryptArgs {
-        key_file: key.clone(),
+        key_file: key,
         input: Some(plain),
         output: Some(dir.path().join("p.enc")),
         chunk_size: DEFAULT_CHUNK_SIZE,
         force: false,
         insecure_perms: true,
     })
-    .expect("--insecure-perms should let a 0644 key encrypt");
-
-    // The rotation should preserve the (insecure) mode the user set.
-    let mode = fs::metadata(&key).unwrap().permissions().mode() & 0o777;
-    assert_eq!(
-        mode, 0o644,
-        "key rotation should preserve original permissions"
-    );
+    .expect("--insecure-perms should let a 0644 composite key encrypt");
 }

@@ -35,7 +35,6 @@ fn password_round_trip() {
             password: true,
             input: Some(ct.clone()),
             output: Some(out.clone()),
-            max_key_steps: 8,
             force: true,
             insecure_perms: false,
         })
@@ -69,10 +68,14 @@ fn wrong_password_fails() {
             password: true,
             input: Some(ct),
             output: Some(dir.path().join("oops")),
-            max_key_steps: 4,
             force: true,
             insecure_perms: false,
         })
     });
     assert!(res.is_err());
+    let err = format!("{:#}", res.unwrap_err());
+    assert!(
+        err.contains("wrong password"),
+        "expected wrong password error, got: {err}"
+    );
 }

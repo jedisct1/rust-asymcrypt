@@ -6,9 +6,6 @@ use std::sync::Mutex;
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-/// Run `f` with `ASYMCRYPT_PASSWORD` set, serialised against any other
-/// caller in the same test binary. Touching the process environment is
-/// inherently global, so we take an exclusive lock for the duration.
 pub fn with_password<R>(pw: &str, f: impl FnOnce() -> R) -> R {
     let _g = ENV_LOCK.lock().unwrap();
     // SAFETY: serialised with ENV_LOCK to keep this single-threaded.

@@ -1,18 +1,20 @@
 use anyhow::{Context, Result, anyhow, bail};
 use std::io::Read;
 
-use crate::crypto::FILE_NONCE_LEN;
+use crate::crypto::{
+    ENCRYPTED_SEED_LEN, FILE_NONCE_LEN, KEM_CT_LEN, PASSWORD_BLOB_LEN, SEED_TAG_LEN,
+};
 
 pub const MAGIC: &[u8; 8] = b"ASYMCRY\0";
 pub const VERSION: u8 = 1;
 pub const ALG_AEGIS_128X2: u8 = 1;
 pub const KDF_ARGON2ID: u8 = 1;
-pub const FLAG_PASSWORD_KDF: u8 = 1;
+pub const FLAG_PASSWORD_BLOB: u8 = 1;
 
 pub const DEFAULT_CHUNK_SIZE: u32 = 1024 * 1024;
 pub const MAX_CHUNK_SIZE: u32 = 64 * 1024 * 1024;
 
-pub const HEADER_FIXED_LEN: usize = 8 + 1 + 1 + 1 + 4 + FILE_NONCE_LEN + 2;
+pub const HEADER_FIXED_LEN: usize = 8 + 1 + 1 + 1 + 4 + FILE_NONCE_LEN + 2 + KEM_CT_LEN;
 pub const ARGON2_METADATA_LEN: usize = 1 + 16 + 4 + 4 + 4;
 
 pub const FINAL_CHUNK_FLAG: u8 = 1;
@@ -59,29 +61,68 @@ impl Argon2Meta {
 }
 
 #[derive(Debug, Clone)]
+pub struct PasswordBlob {
+    pub encrypted_seed: [u8; ENCRYPTED_SEED_LEN],
+    pub seed_tag: [u8; SEED_TAG_LEN],
+    pub argon2: Argon2Meta,
+}
+
+impl PasswordBlob {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut v = Vec::with_capacity(PASSWORD_BLOB_LEN);
+        v.extend_from_slice(&self.encrypted_seed);
+        v.extend_from_slice(&self.seed_tag);
+        v.extend_from_slice(&self.argon2.encode());
+        v
+    }
+
+    pub fn decode(buf: &[u8]) -> Result<Self> {
+        if buf.len() != PASSWORD_BLOB_LEN {
+            bail!("invalid password blob length: {}", buf.len());
+        }
+        let mut encrypted_seed = [0u8; ENCRYPTED_SEED_LEN];
+        encrypted_seed.copy_from_slice(&buf[..ENCRYPTED_SEED_LEN]);
+        let mut seed_tag = [0u8; SEED_TAG_LEN];
+        seed_tag.copy_from_slice(&buf[ENCRYPTED_SEED_LEN..ENCRYPTED_SEED_LEN + SEED_TAG_LEN]);
+        let argon2 = Argon2Meta::decode(&buf[ENCRYPTED_SEED_LEN + SEED_TAG_LEN..])?;
+        Ok(Self {
+            encrypted_seed,
+            seed_tag,
+            argon2,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Header {
     pub chunk_size: u32,
     pub file_nonce: [u8; FILE_NONCE_LEN],
-    pub kdf: Option<Argon2Meta>,
+    pub kem_ciphertext: [u8; KEM_CT_LEN],
+    pub password_blob: Option<PasswordBlob>,
 }
 
 impl Header {
     pub fn encode(&self) -> Vec<u8> {
-        let kdf_bytes = self.kdf.as_ref().map(|m| m.encode()).unwrap_or_default();
-        let header_len = u16::try_from(kdf_bytes.len()).expect("header metadata fits in u16");
-        let mut v = Vec::with_capacity(HEADER_FIXED_LEN + kdf_bytes.len());
+        let blob_bytes = self
+            .password_blob
+            .as_ref()
+            .map(|b| b.encode())
+            .unwrap_or_default();
+        let header_len = u16::try_from(blob_bytes.len()).expect("header metadata fits in u16");
+        let mut v = Vec::with_capacity(HEADER_FIXED_LEN + blob_bytes.len());
         v.extend_from_slice(MAGIC);
         v.push(VERSION);
         v.push(ALG_AEGIS_128X2);
-        v.push(if self.kdf.is_some() {
-            FLAG_PASSWORD_KDF
+        v.push(if self.password_blob.is_some() {
+            FLAG_PASSWORD_BLOB
         } else {
             0
         });
         v.extend_from_slice(&self.chunk_size.to_le_bytes());
         v.extend_from_slice(&self.file_nonce);
         v.extend_from_slice(&header_len.to_le_bytes());
-        v.extend_from_slice(&kdf_bytes);
+        v.extend_from_slice(&self.kem_ciphertext);
+        v.extend_from_slice(&blob_bytes);
         v
     }
 
@@ -98,7 +139,7 @@ impl Header {
             bail!("unsupported algorithm id {}", fixed[9]);
         }
         let flags = fixed[10];
-        if flags & !FLAG_PASSWORD_KDF != 0 {
+        if flags & !FLAG_PASSWORD_BLOB != 0 {
             bail!("unknown header flags: {:#x}", flags);
         }
         let chunk_size = u32::from_le_bytes(fixed[11..15].try_into().unwrap());
@@ -108,16 +149,18 @@ impl Header {
         let mut file_nonce = [0u8; FILE_NONCE_LEN];
         file_nonce.copy_from_slice(&fixed[15..31]);
         let header_len = u16::from_le_bytes(fixed[31..33].try_into().unwrap()) as usize;
+        let mut kem_ciphertext = [0u8; KEM_CT_LEN];
+        kem_ciphertext.copy_from_slice(&fixed[33..33 + KEM_CT_LEN]);
 
         let mut metadata = vec![0u8; header_len];
         r.read_exact(&mut metadata)
             .context("reading header metadata")?;
 
-        let kdf = if flags & FLAG_PASSWORD_KDF != 0 {
-            Some(Argon2Meta::decode(&metadata)?)
+        let password_blob = if flags & FLAG_PASSWORD_BLOB != 0 {
+            Some(PasswordBlob::decode(&metadata)?)
         } else {
             if header_len != 0 {
-                bail!("metadata present but no KDF flag set");
+                bail!("metadata present but no password-blob flag set");
             }
             None
         };
@@ -129,7 +172,8 @@ impl Header {
             Self {
                 chunk_size,
                 file_nonce,
-                kdf,
+                kem_ciphertext,
+                password_blob,
             },
             full,
         ))
@@ -138,10 +182,6 @@ impl Header {
 
 pub const CHUNK_AD_TRAILER_LEN: usize = 8 + 4 + 1;
 
-/// Allocate a per-stream AD buffer with the header bytes already copied in.
-/// Subsequent chunks reuse the buffer via [`update_chunk_ad`], which only
-/// overwrites the trailing 13 bytes — saving one header memcpy per chunk
-/// across the lifetime of the stream.
 pub fn new_chunk_ad(header: &[u8]) -> Vec<u8> {
     let mut ad = Vec::with_capacity(header.len() + CHUNK_AD_TRAILER_LEN);
     ad.extend_from_slice(header);
@@ -187,36 +227,46 @@ mod tests {
     use std::io::Cursor;
 
     #[test]
-    fn header_round_trip_no_kdf() {
+    fn header_round_trip_no_blob() {
         let h = Header {
             chunk_size: 64 * 1024,
             file_nonce: [0xa5; FILE_NONCE_LEN],
-            kdf: None,
+            kem_ciphertext: [0x33; KEM_CT_LEN],
+            password_blob: None,
         };
         let bytes = h.encode();
         let mut cur = Cursor::new(&bytes);
         let (parsed, raw) = Header::read(&mut cur).unwrap();
         assert_eq!(parsed.chunk_size, h.chunk_size);
         assert_eq!(parsed.file_nonce, h.file_nonce);
-        assert!(parsed.kdf.is_none());
+        assert_eq!(parsed.kem_ciphertext, h.kem_ciphertext);
+        assert!(parsed.password_blob.is_none());
         assert_eq!(raw, bytes);
     }
 
     #[test]
-    fn header_round_trip_with_kdf() {
+    fn header_round_trip_with_blob() {
         let h = Header {
             chunk_size: DEFAULT_CHUNK_SIZE,
             file_nonce: [0x11; FILE_NONCE_LEN],
-            kdf: Some(Argon2Meta {
-                salt: [0x33; 16],
-                mem_kib: 65536,
-                iterations: 3,
-                parallelism: 4,
+            kem_ciphertext: [0x55; KEM_CT_LEN],
+            password_blob: Some(PasswordBlob {
+                encrypted_seed: [0xaa; ENCRYPTED_SEED_LEN],
+                seed_tag: [0xbb; SEED_TAG_LEN],
+                argon2: Argon2Meta {
+                    salt: [0x33; 16],
+                    mem_kib: 65536,
+                    iterations: 3,
+                    parallelism: 4,
+                },
             }),
         };
         let bytes = h.encode();
         let (parsed, raw) = Header::read(&mut Cursor::new(&bytes)).unwrap();
-        assert_eq!(parsed.kdf.unwrap(), h.kdf.unwrap());
+        let blob = parsed.password_blob.unwrap();
+        assert_eq!(blob.encrypted_seed, [0xaa; ENCRYPTED_SEED_LEN]);
+        assert_eq!(blob.seed_tag, [0xbb; SEED_TAG_LEN]);
+        assert_eq!(blob.argon2, h.password_blob.unwrap().argon2);
         assert_eq!(raw, bytes);
     }
 
@@ -225,7 +275,8 @@ mod tests {
         let mut bytes = Header {
             chunk_size: 1024,
             file_nonce: [0; FILE_NONCE_LEN],
-            kdf: None,
+            kem_ciphertext: [0; KEM_CT_LEN],
+            password_blob: None,
         }
         .encode();
         bytes[0] = b'X';
@@ -237,7 +288,8 @@ mod tests {
         let mut bytes = Header {
             chunk_size: 1,
             file_nonce: [0; FILE_NONCE_LEN],
-            kdf: None,
+            kem_ciphertext: [0; KEM_CT_LEN],
+            password_blob: None,
         }
         .encode();
         bytes[11..15].copy_from_slice(&0u32.to_le_bytes());
@@ -249,10 +301,31 @@ mod tests {
         let mut bytes = Header {
             chunk_size: 1,
             file_nonce: [0; FILE_NONCE_LEN],
-            kdf: None,
+            kem_ciphertext: [0; KEM_CT_LEN],
+            password_blob: None,
         }
         .encode();
         bytes[11..15].copy_from_slice(&(MAX_CHUNK_SIZE + 1).to_le_bytes());
         assert!(Header::read(&mut Cursor::new(&bytes)).is_err());
+    }
+
+    #[test]
+    fn password_blob_round_trip() {
+        let blob = PasswordBlob {
+            encrypted_seed: [0x11; ENCRYPTED_SEED_LEN],
+            seed_tag: [0x22; SEED_TAG_LEN],
+            argon2: Argon2Meta {
+                salt: [0x44; 16],
+                mem_kib: 32768,
+                iterations: 2,
+                parallelism: 1,
+            },
+        };
+        let encoded = blob.encode();
+        assert_eq!(encoded.len(), PASSWORD_BLOB_LEN);
+        let decoded = PasswordBlob::decode(&encoded).unwrap();
+        assert_eq!(decoded.encrypted_seed, blob.encrypted_seed);
+        assert_eq!(decoded.seed_tag, blob.seed_tag);
+        assert_eq!(decoded.argon2, blob.argon2);
     }
 }

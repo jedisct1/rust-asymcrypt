@@ -15,10 +15,10 @@ aegis = "0.9"
 anyhow = "1"
 argon2 = "0.5"
 clap = { version = "4", features = ["derive"] }
-fs2 = "0.4"
 getrandom = "0.4"
 hex = "0.4"
 hmac = "0.13"
+ml-kem = { version = "0.3", features = ["zeroize", "getrandom"] }
 rpassword = "7"
 sha2 = "0.11"
 subtle = "2"

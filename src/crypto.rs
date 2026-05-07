@@ -1,18 +1,26 @@
 use aegis::aegis128x2::Aegis128X2;
-use hmac::{Hmac, KeyInit, Mac};
+use hmac::{Hmac, Mac};
+use ml_kem::kem::{Decapsulate, Encapsulate};
+use ml_kem::{Kem, KeyExport, KeyInit, MlKem768};
 use sha2::Sha256;
 use zeroize::Zeroize;
 
-pub const MASTER_KEY_LEN: usize = 32;
 pub const CIPHER_KEY_LEN: usize = 16;
 pub const TAG_LEN: usize = 32;
 pub const NONCE_LEN: usize = 16;
 pub const FILE_NONCE_LEN: usize = 16;
-pub const KEY_CHECK_LEN: usize = 32;
 
-pub const KEY_EVOLUTION_LABEL: &[u8] = b"asymcrypt key evolution v1";
+pub const EK_LEN: usize = 1184;
+pub const DK_SEED_LEN: usize = 64;
+pub const KEM_CT_LEN: usize = 1088;
+pub const SHARED_SECRET_LEN: usize = 32;
+
+pub const ENCRYPTED_SEED_LEN: usize = DK_SEED_LEN;
+pub const SEED_TAG_LEN: usize = TAG_LEN;
+pub const PASSWORD_BLOB_LEN: usize = ENCRYPTED_SEED_LEN + SEED_TAG_LEN + 29;
+
 pub const FILE_DERIVATION_LABEL: &[u8] = b"asymcrypt file derivation v1";
-pub const KEY_CHECK_LABEL: &[u8] = b"asymcrypt key check v1";
+pub const DK_WRAP_NONCE_LABEL: &[u8] = b"asymcrypt dk wrap nonce v1";
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -29,17 +37,11 @@ fn hmac_sha256(key: &[u8], parts: &[&[u8]]) -> [u8; 32] {
     buf
 }
 
-pub fn evolve_key(key: &mut [u8; MASTER_KEY_LEN]) {
-    let mut full = hmac_sha256(key, &[KEY_EVOLUTION_LABEL]);
-    key.copy_from_slice(&full);
-    full.zeroize();
-}
-
 pub fn derive_file_secrets(
-    stream_key: &[u8; MASTER_KEY_LEN],
+    shared_secret: &[u8; SHARED_SECRET_LEN],
     file_nonce: &[u8; FILE_NONCE_LEN],
 ) -> ([u8; CIPHER_KEY_LEN], [u8; NONCE_LEN]) {
-    let mut full = hmac_sha256(stream_key, &[FILE_DERIVATION_LABEL, file_nonce]);
+    let mut full = hmac_sha256(shared_secret, &[FILE_DERIVATION_LABEL, file_nonce]);
     let mut file_key = [0u8; CIPHER_KEY_LEN];
     let mut base_nonce = [0u8; NONCE_LEN];
     file_key.copy_from_slice(&full[..CIPHER_KEY_LEN]);
@@ -57,15 +59,70 @@ pub fn derive_chunk_nonce(base_nonce: &[u8; NONCE_LEN], chunk_index: u64) -> [u8
     nonce
 }
 
-pub fn key_check(
-    stream_key: &[u8; MASTER_KEY_LEN],
-    file_nonce: &[u8; FILE_NONCE_LEN],
-) -> [u8; KEY_CHECK_LEN] {
-    hmac_sha256(stream_key, &[KEY_CHECK_LABEL, file_nonce])
+pub fn kem_generate() -> ([u8; DK_SEED_LEN], [u8; EK_LEN]) {
+    let (dk, ek) = MlKem768::generate_keypair();
+    let mut seed = [0u8; DK_SEED_LEN];
+    seed.copy_from_slice(dk.to_seed().unwrap().as_slice());
+    let mut ek_bytes = [0u8; EK_LEN];
+    ek_bytes.copy_from_slice(ek.to_bytes().as_slice());
+    (seed, ek_bytes)
 }
 
-/// In-place AEGIS-128X2 encryption. `buf` is overwritten with ciphertext;
-/// the returned 16-byte tag must be appended to the stream.
+pub fn kem_encapsulate(
+    ek_bytes: &[u8; EK_LEN],
+) -> anyhow::Result<([u8; KEM_CT_LEN], [u8; SHARED_SECRET_LEN])> {
+    let ek = ml_kem::EncapsulationKey768::new(ek_bytes.into())
+        .map_err(|_| anyhow::anyhow!("invalid ML-KEM-768 encapsulation key"))?;
+    let (ct, ss) = ek.encapsulate();
+    let mut ct_out = [0u8; KEM_CT_LEN];
+    ct_out.copy_from_slice(ct.as_slice());
+    let mut ss_out = [0u8; SHARED_SECRET_LEN];
+    ss_out.copy_from_slice(ss.as_slice());
+    Ok((ct_out, ss_out))
+}
+
+pub fn kem_decapsulate(seed: &[u8; DK_SEED_LEN], ct: &[u8; KEM_CT_LEN]) -> [u8; SHARED_SECRET_LEN] {
+    let dk = ml_kem::DecapsulationKey768::new(seed.into());
+    let ss = dk.decapsulate(ct.into());
+    let mut ss_out = [0u8; SHARED_SECRET_LEN];
+    ss_out.copy_from_slice(ss.as_slice());
+    ss_out
+}
+
+fn dk_wrap_params(argon2_key: &[u8; SHARED_SECRET_LEN]) -> ([u8; CIPHER_KEY_LEN], [u8; NONCE_LEN]) {
+    let mut wrap_key = [0u8; CIPHER_KEY_LEN];
+    wrap_key.copy_from_slice(&argon2_key[..CIPHER_KEY_LEN]);
+    let mut nonce_full = hmac_sha256(argon2_key, &[DK_WRAP_NONCE_LABEL]);
+    let mut wrap_nonce = [0u8; NONCE_LEN];
+    wrap_nonce.copy_from_slice(&nonce_full[..NONCE_LEN]);
+    nonce_full.zeroize();
+    (wrap_key, wrap_nonce)
+}
+
+pub fn wrap_dk_seed(
+    argon2_key: &[u8; SHARED_SECRET_LEN],
+    seed: &[u8; DK_SEED_LEN],
+) -> ([u8; ENCRYPTED_SEED_LEN], [u8; SEED_TAG_LEN]) {
+    let (wrap_key, wrap_nonce) = dk_wrap_params(argon2_key);
+    let mut ct = [0u8; ENCRYPTED_SEED_LEN];
+    ct.copy_from_slice(seed);
+    let tag = Aegis128X2::<TAG_LEN>::new(&wrap_key, &wrap_nonce).encrypt_in_place(&mut ct, b"");
+    (ct, tag)
+}
+
+pub fn unwrap_dk_seed(
+    argon2_key: &[u8; SHARED_SECRET_LEN],
+    encrypted_seed: &[u8; ENCRYPTED_SEED_LEN],
+    seed_tag: &[u8; SEED_TAG_LEN],
+) -> Result<[u8; DK_SEED_LEN], aegis::Error> {
+    let (wrap_key, wrap_nonce) = dk_wrap_params(argon2_key);
+    let mut seed = [0u8; DK_SEED_LEN];
+    seed.copy_from_slice(encrypted_seed);
+    Aegis128X2::<TAG_LEN>::new(&wrap_key, &wrap_nonce)
+        .decrypt_in_place(&mut seed, seed_tag, b"")?;
+    Ok(seed)
+}
+
 pub fn encrypt_chunk_in_place(
     key: &[u8; CIPHER_KEY_LEN],
     nonce: &[u8; NONCE_LEN],
@@ -75,9 +132,6 @@ pub fn encrypt_chunk_in_place(
     Aegis128X2::<TAG_LEN>::new(key, nonce).encrypt_in_place(buf, ad)
 }
 
-/// In-place AEGIS-128X2 decryption. `buf` enters as ciphertext and exits as
-/// authenticated plaintext. On `Err`, `buf` may be in an indeterminate state
-/// and the caller must not surface its bytes.
 pub fn decrypt_chunk_in_place(
     key: &[u8; CIPHER_KEY_LEN],
     nonce: &[u8; NONCE_LEN],
@@ -104,34 +158,8 @@ mod tests {
     }
 
     #[test]
-    fn evolve_is_deterministic() {
-        let mut a = [0x42u8; MASTER_KEY_LEN];
-        let mut b = [0x42u8; MASTER_KEY_LEN];
-        evolve_key(&mut a);
-        evolve_key(&mut b);
-        assert_eq!(a, b);
-        assert_ne!(a, [0x42u8; MASTER_KEY_LEN]);
-    }
-
-    #[test]
-    fn evolve_changes_key() {
-        let mut k = [0u8; MASTER_KEY_LEN];
-        let original = k;
-        evolve_key(&mut k);
-        assert_ne!(k, original);
-    }
-
-    #[test]
-    fn evolve_known_vector() {
-        let mut k = [0u8; MASTER_KEY_LEN];
-        evolve_key(&mut k);
-        let expected = expected_hmac(&[0u8; MASTER_KEY_LEN], &[KEY_EVOLUTION_LABEL]);
-        assert_eq!(&k[..], &expected[..]);
-    }
-
-    #[test]
     fn derive_file_secrets_is_deterministic() {
-        let k = [0x42u8; MASTER_KEY_LEN];
+        let k = [0x42u8; SHARED_SECRET_LEN];
         let fnz = [0x9eu8; FILE_NONCE_LEN];
         let a = derive_file_secrets(&k, &fnz);
         let b = derive_file_secrets(&k, &fnz);
@@ -140,8 +168,8 @@ mod tests {
 
     #[test]
     fn derive_file_secrets_depends_on_each_input() {
-        let k1 = [1u8; MASTER_KEY_LEN];
-        let k2 = [2u8; MASTER_KEY_LEN];
+        let k1 = [1u8; SHARED_SECRET_LEN];
+        let k2 = [2u8; SHARED_SECRET_LEN];
         let fn1 = [0x55u8; FILE_NONCE_LEN];
         let fn2 = [0xaau8; FILE_NONCE_LEN];
         let a = derive_file_secrets(&k1, &fn1);
@@ -155,7 +183,7 @@ mod tests {
 
     #[test]
     fn derive_file_secrets_halves_differ() {
-        let k = [0u8; MASTER_KEY_LEN];
+        let k = [0u8; SHARED_SECRET_LEN];
         let fnz = [0u8; FILE_NONCE_LEN];
         let (file_key, base_nonce) = derive_file_secrets(&k, &fnz);
         assert_ne!(file_key, base_nonce);
@@ -163,7 +191,7 @@ mod tests {
 
     #[test]
     fn derive_file_secrets_known_vector() {
-        let k = [0u8; MASTER_KEY_LEN];
+        let k = [0u8; SHARED_SECRET_LEN];
         let fnz = [0u8; FILE_NONCE_LEN];
         let (file_key, base_nonce) = derive_file_secrets(&k, &fnz);
         let expected = expected_hmac(&k, &[FILE_DERIVATION_LABEL, &fnz]);
@@ -200,20 +228,38 @@ mod tests {
     }
 
     #[test]
-    fn key_check_matches_label() {
-        let k = [0xabu8; MASTER_KEY_LEN];
-        let fnz = [0x5cu8; FILE_NONCE_LEN];
-        let kc = key_check(&k, &fnz);
-        let expected = expected_hmac(&k, &[KEY_CHECK_LABEL, &fnz]);
-        assert_eq!(&kc[..], &expected[..]);
+    fn kem_round_trip() {
+        let (seed, ek) = kem_generate();
+        let (ct, ss_enc) = kem_encapsulate(&ek).unwrap();
+        let ss_dec = kem_decapsulate(&seed, &ct);
+        assert_eq!(ss_enc, ss_dec);
     }
 
     #[test]
-    fn key_check_binds_to_file_nonce() {
-        let k = [0xabu8; MASTER_KEY_LEN];
-        let a = key_check(&k, &[0u8; FILE_NONCE_LEN]);
-        let b = key_check(&k, &[1u8; FILE_NONCE_LEN]);
-        assert_ne!(a, b);
+    fn kem_wrong_seed_produces_different_shared_secret() {
+        let (_seed, ek) = kem_generate();
+        let (seed2, _) = kem_generate();
+        let (ct, ss_enc) = kem_encapsulate(&ek).unwrap();
+        let ss_dec = kem_decapsulate(&seed2, &ct);
+        assert_ne!(ss_enc, ss_dec);
+    }
+
+    #[test]
+    fn wrap_unwrap_dk_seed_round_trip() {
+        let key = [0xabu8; SHARED_SECRET_LEN];
+        let seed = [0x42u8; DK_SEED_LEN];
+        let (ct, tag) = wrap_dk_seed(&key, &seed);
+        let recovered = unwrap_dk_seed(&key, &ct, &tag).unwrap();
+        assert_eq!(recovered, seed);
+    }
+
+    #[test]
+    fn unwrap_dk_seed_wrong_key_fails() {
+        let key = [0xabu8; SHARED_SECRET_LEN];
+        let seed = [0x42u8; DK_SEED_LEN];
+        let (ct, tag) = wrap_dk_seed(&key, &seed);
+        let wrong_key = [0xcdu8; SHARED_SECRET_LEN];
+        assert!(unwrap_dk_seed(&wrong_key, &ct, &tag).is_err());
     }
 
     #[test]

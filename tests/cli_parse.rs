@@ -94,3 +94,19 @@ fn init_hex_works_in_both_modes() {
     assert!(args.password);
     assert!(args.hex);
 }
+
+#[test]
+fn decrypt_max_key_steps_is_gone() {
+    let err = parse(&[
+        "asymcrypt",
+        "decrypt",
+        "--max-key-steps",
+        "100",
+        "-k",
+        "k",
+        "-i",
+        "f",
+    ])
+    .unwrap_err();
+    assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
+}

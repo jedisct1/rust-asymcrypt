@@ -2,16 +2,13 @@ use anyhow::{Context, Result, bail};
 use argon2::{Algorithm, Argon2, Params, Version};
 use zeroize::Zeroize;
 
-use crate::crypto::MASTER_KEY_LEN;
+use crate::crypto::SHARED_SECRET_LEN;
 use crate::format::Argon2Meta;
 
 pub const DEFAULT_MEM_KIB: u32 = 256 * 1024;
 pub const DEFAULT_ITERATIONS: u32 = 3;
 pub const DEFAULT_PARALLELISM: u32 = 1;
 
-/// Resolve user-supplied Argon2 overrides against the project defaults and
-/// validate the result. `None` for any field means "use the default"; a
-/// `Some(0)` is a typo and is rejected with a clear per-field error.
 pub fn resolve_argon2_params(
     mem_kib: Option<u32>,
     iterations: Option<u32>,
@@ -35,16 +32,16 @@ pub fn resolve_argon2_params(
 pub fn derive_key_from_password(
     password: &[u8],
     meta: &Argon2Meta,
-) -> Result<[u8; MASTER_KEY_LEN]> {
+) -> Result<[u8; SHARED_SECRET_LEN]> {
     let params = Params::new(
         meta.mem_kib,
         meta.iterations,
         meta.parallelism,
-        Some(MASTER_KEY_LEN),
+        Some(SHARED_SECRET_LEN),
     )
     .map_err(|e| anyhow::anyhow!("invalid Argon2 params: {e}"))?;
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-    let mut out = [0u8; MASTER_KEY_LEN];
+    let mut out = [0u8; SHARED_SECRET_LEN];
     argon
         .hash_password_into(password, &meta.salt, &mut out)
         .map_err(|e| anyhow::anyhow!("argon2id failed: {e}"))?;
