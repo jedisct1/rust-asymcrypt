@@ -1,8 +1,8 @@
 use aegis::aegis128x2::Aegis128X2;
-use hmac::{Hmac, Mac};
-use ml_kem::kem::{Decapsulate, Encapsulate};
-use ml_kem::{Kem, KeyExport, KeyInit, MlKem768};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
+use x_wing::kem::{Decapsulate, Encapsulate};
+use x_wing::{DecapsulationKey, EncapsulationKey, Kem, KeyExport, TryKeyInit, XWingKem};
 use zeroize::Zeroize;
 
 pub const CIPHER_KEY_LEN: usize = 16;
@@ -10,9 +10,9 @@ pub const TAG_LEN: usize = 32;
 pub const NONCE_LEN: usize = 16;
 pub const FILE_NONCE_LEN: usize = 16;
 
-pub const EK_LEN: usize = 1184;
-pub const DK_SEED_LEN: usize = 64;
-pub const KEM_CT_LEN: usize = 1088;
+pub const EK_LEN: usize = 1216;
+pub const DK_SEED_LEN: usize = 32;
+pub const KEM_CT_LEN: usize = 1120;
 pub const SHARED_SECRET_LEN: usize = 32;
 
 pub const ENCRYPTED_SEED_LEN: usize = DK_SEED_LEN;
@@ -60,9 +60,9 @@ pub fn derive_chunk_nonce(base_nonce: &[u8; NONCE_LEN], chunk_index: u64) -> [u8
 }
 
 pub fn kem_generate() -> ([u8; DK_SEED_LEN], [u8; EK_LEN]) {
-    let (dk, ek) = MlKem768::generate_keypair();
+    let (dk, ek) = XWingKem::generate_keypair();
     let mut seed = [0u8; DK_SEED_LEN];
-    seed.copy_from_slice(dk.to_seed().unwrap().as_slice());
+    seed.copy_from_slice(dk.as_bytes());
     let mut ek_bytes = [0u8; EK_LEN];
     ek_bytes.copy_from_slice(ek.to_bytes().as_slice());
     (seed, ek_bytes)
@@ -71,8 +71,8 @@ pub fn kem_generate() -> ([u8; DK_SEED_LEN], [u8; EK_LEN]) {
 pub fn kem_encapsulate(
     ek_bytes: &[u8; EK_LEN],
 ) -> anyhow::Result<([u8; KEM_CT_LEN], [u8; SHARED_SECRET_LEN])> {
-    let ek = ml_kem::EncapsulationKey768::new(ek_bytes.into())
-        .map_err(|_| anyhow::anyhow!("invalid ML-KEM-768 encapsulation key"))?;
+    let ek = EncapsulationKey::new_from_slice(ek_bytes)
+        .map_err(|_| anyhow::anyhow!("invalid X-Wing encapsulation key"))?;
     let (ct, ss) = ek.encapsulate();
     let mut ct_out = [0u8; KEM_CT_LEN];
     ct_out.copy_from_slice(ct.as_slice());
@@ -82,7 +82,7 @@ pub fn kem_encapsulate(
 }
 
 pub fn kem_decapsulate(seed: &[u8; DK_SEED_LEN], ct: &[u8; KEM_CT_LEN]) -> [u8; SHARED_SECRET_LEN] {
-    let dk = ml_kem::DecapsulationKey768::new(seed.into());
+    let dk = DecapsulationKey::from(*seed);
     let ss = dk.decapsulate(ct.into());
     let mut ss_out = [0u8; SHARED_SECRET_LEN];
     ss_out.copy_from_slice(ss.as_slice());

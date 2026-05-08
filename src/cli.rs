@@ -17,7 +17,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Initialise an ML-KEM-768 key pair.
+    /// Initialise an X-Wing key pair.
     ///
     /// By default, writes the public encapsulation key to `--out` (device)
     /// and the private decapsulation seed to `--recovery-out` (offline).

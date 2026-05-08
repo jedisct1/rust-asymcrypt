@@ -257,11 +257,11 @@ fn round_trip_recovers_with_offline_key() {
     let plain = dir.path().join("plain.txt");
     let cipher = dir.path().join("plain.asym");
     let recovered = dir.path().join("plain.out");
-    fs::write(&plain, b"hello ml-kem").unwrap();
+    fs::write(&plain, b"hello x-wing").unwrap();
 
     run_encrypt(encrypt_args(device, plain, cipher.clone())).unwrap();
     run_decrypt(decrypt_args_keyfile(recovery, cipher, recovered.clone())).unwrap();
-    assert_eq!(fs::read(&recovered).unwrap(), b"hello ml-kem");
+    assert_eq!(fs::read(&recovered).unwrap(), b"hello x-wing");
 }
 
 #[test]

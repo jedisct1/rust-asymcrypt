@@ -6,7 +6,7 @@ It works like [`encpipe`](https://github.com/jedisct1/encpipe): input defaults t
 
 Encryption is authenticated, fast, post-quantum resistant, etc. The underlying cipher is [AEGIS-128X](https://datatracker.ietf.org/doc/draft-irtf-cfrg-aegis-aead/), a parallel AES-based AEAD that runs at memory speed on anything with hardware AES support.
 
-What makes it different from a plain symmetric encryption system is that the encrypting host holds only a public ML-KEM-768 encapsulation key. Each encryption performs a fresh KEM encapsulation, producing a per-file shared secret that the host immediately forgets. The host literally cannot decrypt anything it produces: it never held the decapsulation key in the first place.
+What makes it different from a plain symmetric encryption system is that the encrypting host holds only a public X-Wing encapsulation key. Each encryption performs a fresh KEM encapsulation, producing a per-file shared secret that the host immediately forgets. The host literally cannot decrypt anything it produces: it never held the decapsulation key in the first place.
 
 Decryption requires a separate decapsulation seed (or a password) that was set aside when the keys were generated. It never has to live on the encrypting host.
 
@@ -26,9 +26,9 @@ cargo install asymcrypt
 
 ## Setting up
 
-You start by creating a fresh ML-KEM-768 key pair. Both keys are produced locally in one shot, with no network involved and no exchange between machines.
+You start by creating a fresh X-Wing key pair. Both keys are produced locally in one shot, with no network involved and no exchange between machines.
 
-The recovery key is a 64-byte decapsulation seed. Print it, write it to a USB stick, store it in a password manager, whatever fits your threat model. It is the only thing that can ever decrypt the ciphertexts, and it never has to leave the place you stored it until you actually need to recover something.
+The recovery key is a 32-byte decapsulation seed. Print it, write it to a USB stick, store it in a password manager, whatever fits your threat model. It is the only thing that can ever decrypt the ciphertexts, and it never has to leave the place you stored it until you actually need to recover something.
 
 The device key is the public encapsulation key. It lives on the encrypting host and is never modified by any operation.
 
@@ -48,7 +48,7 @@ Point `encrypt` at the on-device key and feed it any stream:
 tar c /etc | asymcrypt encrypt -k device.key -o etc.asym
 ```
 
-Each encryption performs a fresh ML-KEM encapsulation. The device key is a public key and is never modified.
+Each encryption performs a fresh X-Wing encapsulation. The device key is a public key and is never modified.
 
 From then on, the host cannot decrypt what it just produced.
 
@@ -103,15 +103,15 @@ File output is staged in a temporary file in the destination directory and renam
 
 ### Type 0x01 -- Encapsulation key (device, public)
 
-1185 bytes: one type byte plus the 1184-byte ML-KEM-768 encapsulation key. This is a public key. Permission enforcement is skipped.
+1217 bytes: one type byte plus the 1216-byte X-Wing encapsulation key. This is a public key. Permission enforcement is skipped.
 
 ### Type 0x02 -- Composite key (password mode)
 
-1310 bytes: type byte, 1184-byte encapsulation key, 64-byte encrypted decapsulation seed, 32-byte AEGIS tag, and 29 bytes of Argon2 parameters. Contains an encrypted secret; 0o600 permissions are enforced.
+1310 bytes: type byte, 1216-byte encapsulation key, 32-byte encrypted decapsulation seed, 32-byte AEGIS tag, and 29 bytes of Argon2 parameters. Contains an encrypted secret; 0o600 permissions are enforced.
 
 ### Type 0x03 -- Decapsulation seed (recovery, private)
 
-65 bytes: one type byte plus the 64-byte ML-KEM-768 decapsulation key seed. Must be kept offline. 0o600 permissions are enforced.
+33 bytes: one type byte plus the 32-byte X-Wing decapsulation key seed. Must be kept offline. 0o600 permissions are enforced.
 
 All key files can be written as raw binary (default) or ASCII hex (`--hex`).
 
