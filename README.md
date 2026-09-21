@@ -4,7 +4,7 @@
 
 It works like [`encpipe`](https://github.com/jedisct1/encpipe): input defaults to `stdin`, output defaults to `stdout`, can process arbitrary large inputs ; file paths are optional.
 
-Encryption is authenticated, fast, post-quantum resistant, etc. The underlying cipher is [AEGIS-128X](https://datatracker.ietf.org/doc/draft-irtf-cfrg-aegis-aead/), a parallel AES-based AEAD that runs at memory speed on anything with hardware AES support.
+Encryption is authenticated, fast, post-quantum resistant, etc. The underlying cipher is [AEGIS-128X](https://www.rfc-editor.org/rfc/rfc10032.html), a parallel AES-based AEAD that runs at memory speed on anything with hardware AES support.
 
 What makes it different from a plain symmetric encryption system is that the encrypting host holds only a public X-Wing encapsulation key. Each encryption performs a fresh KEM encapsulation, producing a per-file shared secret that the host immediately forgets. The host literally cannot decrypt anything it produces: it never held the decapsulation key in the first place.
 
