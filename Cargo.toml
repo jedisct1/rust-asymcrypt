@@ -1,6 +1,6 @@
 [package]
 name = "asymcrypt"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 authors = ["Frank Denis <github@pureftpd.org>"]
 description = "Public-key file and stream encryption CLI using X-Wing and AEGIS, with separate encryption and decryption keys"
@@ -18,7 +18,7 @@ clap = { version = "4", features = ["derive"] }
 getrandom = "0.4"
 hex = "0.4"
 hmac = "0.13"
-x-wing = { version = "0.1.0-rc.0", features = ["zeroize", "getrandom"] }
+x-wing = { version = "0.1.0", features = ["zeroize", "getrandom"] }
 rpassword = "7"
 sha2 = "0.11"
 subtle = "2"
