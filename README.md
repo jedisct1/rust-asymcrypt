@@ -1,31 +1,31 @@
 # asymcrypt
 
-`asymcrypt` lets you encrypt data offline with a key that can't decrypt it afterwards.
+Encrypt stuff offline, with a key that can't decrypt it afterwards.
 
-It works a lot like [`encpipe`](https://github.com/jedisct1/encpipe). By default, it reads from `stdin` and writes to `stdout`, so file paths are optional. It can also handle inputs of any size.
+If you've used [`encpipe`](https://github.com/jedisct1/encpipe), you already know how it works. It reads from `stdin`, writes to `stdout`, and doesn't care how big the input is. You can pass file names too, but you don't have to.
 
-Under the hood, it uses [AEGIS-128X](https://www.rfc-editor.org/rfc/rfc10032.html), a fast AES-based cipher that also checks that the data hasn't been tampered with. On any CPU with hardware AES support, it runs about as fast as memory can keep up. On top of that, the key exchange is designed to resist quantum computers.
+The cipher is [AEGIS-128X](https://www.rfc-editor.org/rfc/rfc10032.html). It's fast (on any CPU with AES instructions, it basically goes as fast as your memory), and it also catches any tampering with the data. On top of that, the way keys are exchanged is ready for quantum computers.
 
-## Why use it
+## But why?
 
-So what's the difference from regular symmetric encryption? Here, the machine doing the encryption only has a public key (an X-Wing key).
+With regular encryption, the key that encrypts your data can also decrypt it. Here, that's not the case.
 
-Every time you encrypt something, `asymcrypt` creates a new secret just for that file, uses it, and then throws it away. As a result, the machine can't decrypt anything it has encrypted, because it never had the key needed to do so.
+The machine doing the encryption only gets a public key (an X-Wing key). Every time it encrypts something, a brand new secret is created for that file, used, and then forgotten. And since the machine never has the private key, it simply can't read back what it wrote.
 
-To decrypt, you need a separate recovery key (or a password) that you set aside when you first created the keys. That key never has to be on the machine doing the encryption.
+To decrypt, you need the recovery key (or a password) that you put aside when you created the keys. That key never needs to be on the machine doing the encryption.
 
-This is useful in many situations. For example:
+Where is this handy? A few examples:
 
-- Backups on a server that could be stolen or hacked one day.
-- Logs sent from a machine you don't trust to read its own history.
-- Archives written by a service that shouldn't be able to read back what it wrote.
-- Drop boxes, where one person encrypts files for someone else.
+- Backups on a server that might get stolen or hacked one day.
+- Logs coming from a machine you don't really trust to read its own history.
+- Archives written by a service that shouldn't be able to look back at what it wrote.
+- Drop boxes, where someone encrypts files for someone else.
 
-In short, it fits anywhere you want something that can write data but not read it.
+Basically, anytime you want something that can write but not read.
 
-Also, everything works offline. There's no handshake, no server, and nobody to coordinate with.
+And it's all offline. No handshake, no server, nobody to talk to.
 
-You create your keys once, with a single local command. After that, the machine can encrypt as much as it wants without ever contacting whoever holds the recovery key. Meanwhile, the recovery key stays wherever you put it, and you only take it out when you actually need to decrypt something.
+You create the keys once, with a single command. After that, the machine can encrypt as much as it wants without ever contacting whoever has the recovery key. The recovery key just sits wherever you put it, until you actually need to decrypt something.
 
 ## Installing
 
@@ -35,43 +35,43 @@ cargo install asymcrypt
 
 ## Setting up
 
-First, create a new key pair. Both keys are made locally in one step, with no network access and nothing sent between machines.
+First, create a key pair. Everything happens locally, in one step. No network, nothing sent anywhere.
 
 ```sh
 asymcrypt init -o device.key -r recovery.key
 ```
 
-The recovery key (`recovery.key`) is a 32-byte secret. You can print it, save it on a USB stick, put it in a password manager, or store it however suits you. It's the only thing that can decrypt your files, so it can stay where it is until you need to recover something.
+You now have two files.
 
-The device key (`device.key`) is the public key. It stays on the machine that encrypts, and nothing ever changes it.
+`recovery.key` is a 32-byte secret, and it's the one to keep offline. Print it, put it on a USB stick, save it in your password manager, whatever works for you. It's the only thing that can decrypt your files, so it can stay there until you need it.
 
-Next, move `recovery.key` somewhere the encrypting machine can't reach, and keep `device.key` on that machine.
+`device.key` is the public key. It goes on the machine that encrypts, and nothing ever changes it.
 
-Be careful, though: if you lose `recovery.key`, you lose access to every file it was meant to unlock. So keep it safe.
+So, move `recovery.key` somewhere the encrypting machine can't get to, and leave `device.key` where it is.
+
+One warning, though: lose `recovery.key`, and everything encrypted with it is gone. Forever. So don't lose it.
 
 ## Encrypting
 
-To encrypt, give `encrypt` the device key and send it any data:
+Give `encrypt` the device key, and pipe whatever you want into it:
 
 ```sh
 tar c /etc | asymcrypt encrypt -k device.key -o etc.asym
 ```
 
-Each run creates a new one-time secret, while the device key itself stays the same.
+Each time, a new one-time secret is created, and the device key doesn't change. And right after that, the machine can't read what it just encrypted.
 
-Once that's done, the machine can no longer read what it just encrypted.
+So you can keep the encrypted file on the same machine, copy it to a NAS, or upload it somewhere. It doesn't matter: the machine never had a way to read it.
 
-This means you can leave the encrypted file on the same machine, copy it to a NAS, or upload it to a shared place. Either way, the machine never had a way to read it.
+## What if the machine gets hacked?
 
-## What you get
+Not much happens, actually. The machine only has a public key, so even someone with full control over it can't decrypt anything, whether it was encrypted before or after.
 
-Since the machine only holds a public key, even an attacker who takes full control of it can't decrypt anything, whether it was encrypted before or after the attack.
-
-The only thing they gain is the ability to encrypt, which they could already do anyway. In other words, the protection comes from the design itself: the secret key is simply never on the machine.
+Sure, they can encrypt new stuff. But they could already do that anyway, since they have the machine. The private key just isn't there, so there's nothing to steal.
 
 ## Decrypting
 
-On any machine that has the recovery key, run:
+On any machine that has the recovery key:
 
 ```sh
 asymcrypt decrypt -k recovery.key -i etc.asym | tar x
@@ -79,60 +79,60 @@ asymcrypt decrypt -k recovery.key -i etc.asym | tar x
 
 ## Password mode
 
-If you'd rather remember a password than store a recovery key, use `--password` when setting up:
+Would you rather remember a password than keep a recovery key around? Then use `--password` when setting up:
 
 ```sh
 asymcrypt init --password -o device.key
 ```
 
-You'll be asked for a password, then asked to type it again.
+You'll be asked for a password, and then asked to type it again.
 
-In this case, the device key file holds the public key plus a copy of the secret key, encrypted with your password (using Argon2id). To decrypt, you only need the password and the encrypted file:
+This time, `device.key` contains the public key, plus the private key encrypted with your password (using Argon2id). To decrypt, all you need is the password and the encrypted file:
 
 ```sh
 tar c /etc | asymcrypt encrypt -k device.key -o etc.asym
 asymcrypt decrypt --password -i etc.asym | tar x
 ```
 
-So in this mode, the password replaces the recovery key, and there's nothing else to store.
+In other words, the password is your recovery key now. There's nothing else to keep.
 
-However, if you forget the password, your files are gone for good.
+But if you forget the password, your files are gone.
 
-Keep in mind that password mode is less secure than the default mode. Both the device key file and each encrypted file contain the secret key, protected only by your password. Because of this, anyone who gets hold of either one can try to guess the password offline, as many times as they like. Your safety then depends on how strong your password is and on the Argon2 settings.
+Also, this mode isn't as safe as using a recovery key. Both `device.key` and every encrypted file contain the private key, protected only by your password. So if someone gets hold of either one, they can try guessing the password offline, as many times as they want. How safe you are then comes down to how good your password is, and to the Argon2 settings.
 
-If you want to use `asymcrypt` in scripts, you can set the `ASYMCRYPT_PASSWORD` environment variable, and it will use that instead of asking.
+For scripts, you can set the `ASYMCRYPT_PASSWORD` environment variable, and `asymcrypt` will use it instead of asking.
 
-That said, be careful: other programs running as the same user can usually read your environment variables.
+Just keep in mind that other programs running as the same user can usually read your environment variables.
 
 ## Input and output
 
-- `-i PATH` reads from `PATH`. If you leave out `-i`, or use `-i -`, it reads from `stdin`. That's the normal way to use it, since it's meant to be part of a pipe.
-- `-o PATH` writes to `PATH`. If you leave out `-o`, or use `-o -`, it writes to `stdout`.
-- It never overwrites an existing file. If you really want to replace one, add `--force`.
+- `-i PATH` reads from `PATH`. Without `-i` (or with `-i -`), it reads from `stdin`. That's how you'd normally use it anyway, in a pipe.
+- `-o PATH` writes to `PATH`. Without `-o` (or with `-o -`), it writes to `stdout`.
+- It never overwrites an existing file. If that's really what you want, add `--force`.
 
-When writing to a file, `asymcrypt` first writes to a temporary file in the same folder. Then, once everything has been written and saved, it renames it to the final name. That way, if something crashes halfway through, you won't end up with a half-written file.
+When writing to a file, `asymcrypt` first writes everything to a temporary file in the same folder, and only renames it once it's all written and saved. So if something crashes halfway, you won't be left with a half-written file.
 
 ## Key file formats
 
 ### Type 0x01: device key (public)
 
-1217 bytes: one type byte, followed by the 1216-byte X-Wing public key.
+1217 bytes: one type byte, then the 1216-byte X-Wing public key.
 
-Since it's a public key, file permissions aren't checked.
+It's a public key, so file permissions aren't checked.
 
 ### Type 0x02: combined key (password mode)
 
-1310 bytes: one type byte, the 1216-byte public key, the 32-byte encrypted secret key, a 32-byte AEGIS tag, and 29 bytes of Argon2 settings.
+1310 bytes: one type byte, the 1216-byte public key, the 32-byte encrypted private key seed, a 32-byte AEGIS tag, and 29 bytes of Argon2 settings.
 
-Because it contains an encrypted secret, the file must have 0o600 permissions.
+Since there's an encrypted secret in there, the file must have 0o600 permissions.
 
 ### Type 0x03: recovery key (private)
 
-33 bytes: one type byte, followed by the 32-byte X-Wing secret key seed.
+33 bytes: one type byte, then the 32-byte X-Wing private key seed.
 
-This one should be kept offline, and the file must have 0o600 permissions.
+Keep this one offline. The file must have 0o600 permissions too.
 
-All key files are saved as raw binary by default, or as hex text if you add `--hex`.
+Key files are saved as raw binary by default. Add `--hex` if you'd rather have them as hex text.
 
 ## Other implementations
 
